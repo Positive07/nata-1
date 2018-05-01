@@ -30,89 +30,89 @@ local nata = {
 local Pool = {}
 Pool.__index = Pool
 
-function Pool:callSystemOn(system, entity, event, ...)
-	if system[event] and (not system.filter or system.filter(entity)) then
-		system[event](entity, ...)
-	end
-end
-
-function Pool:callSystem(system, event, ...)
-	for _, entity in ipairs(self._entities) do
-		self:callSystemOn(system, entity, event, ...)
+function Pool:call(event, ...)
+	for _, system in ipairs(self._systems) do
+		if system[event] then
+			for entity, _ in pairs(self._entities) do
+				if self._cache[system][entity] then
+					system[event](entity, ...)
+				end
+			end
+		end
 	end
 end
 
 function Pool:callOn(entity, event, ...)
-	for _, system in ipairs(self.systems) do
-		self:callSystemOn(system, entity, event, ...)
+	for _, system in ipairs(self._systems) do
+		if system[event] and self._cache[system][entity] then
+			system[event](entity, ...)
+		end
 	end
 end
 
-function Pool:call(event, ...)
-	for _, system in ipairs(self.systems) do
-		self:callSystem(system, event, ...)
-	end
-end
-
-function Pool:queue(entity, ...)
-	table.insert(self._queue, {entity, {...}})
-	return entity
+function Pool:queue(entity)
+	self._queue[entity] = true
 end
 
 function Pool:flush()
-	for i, v in ipairs(self._queue) do
-		local entity, args = v[1], v[2]
-		self:callOn(entity, 'add', unpack(args))
-		table.insert(self._entities, entity)
-		self._queue[i] = nil
+	for entity, _ in pairs(self._queue) do
+		self._entities[entity] = true
+		self._queue[entity] = nil
+		for _, system in ipairs(self._systems) do
+			if (not system.filter) or system.filter(entity) then
+				self._cache[system][entity] = true
+			end
+		end
+		self:callOn(entity, 'add')
 	end
 end
 
-function Pool:remove(f, ...)
-	for i = #self._entities, 1, -1 do
-		local entity = self._entities[i]
+function Pool:remove(f)
+	for entity, _ in pairs(self._entities) do
 		if f(entity) then
-			self:callOn(entity, 'remove', ...)
-			table.remove(self._entities, i)
+			self:callOn(entity, 'remove')
+			self._entities[entity] = nil
+			for _, system in ipairs(self._systems) do
+				self._cache[system][entity] = nil
+			end
 		end
 	end
 end
 
 function Pool:get(f)
 	local entities = {}
-	for _, entity in ipairs(self._entities) do
-		if not f or f(entity) then
+	for entity, _ in pairs(self._entities) do
+		if (not f) or f(entity) then
 			table.insert(entities, entity)
 		end
 	end
 	return entities
 end
 
-function Pool:sort(f) table.sort(self._entities, f) end
-
-function nata.oop()
-	return setmetatable({_f = {}}, {
-		__index = function(t, k)
-			if k == '_f' or k == 'filter' then
-				return rawget(t, k)
-			else
-				t._f[k] = t._f[k] or function(e, ...)
-					if type(e[k]) == 'function' then
-						e[k](e, ...)
-					end
+nata.oop = setmetatable({_f = {}}, {
+	__index = function(t, k)
+		if k == 'filter' then
+			return rawget(t, k)
+		else
+			t._f[k] = t._f[k] or function(e, ...)
+				if type(e[k]) == 'function' then
+					e[k](e, ...)
 				end
-				return t._f[k]
 			end
+			return t._f[k]
 		end
-	})
-end
+	end
+})
 
 function nata.new(systems)
-	return setmetatable({
-		systems = systems or {nata.oop()},
+	local pool = setmetatable({
+		_systems = systems or {nata.oop},
+		_cache = {},
 		_entities = {},
 		_queue = {},
-	}, {__index = Pool})
+	}, Pool)
+	for _, system in ipairs(pool._systems) do
+		pool._cache[system] = {}
+	end
+	return pool
 end
-
-return nata
