@@ -42,7 +42,19 @@ function Pool:call(event, ...)
 	end
 end
 
-function Pool:callOn(entity, event, ...)
+function Pool:callOnLayer(layer, event, ...)
+	for _, system in ipairs(self._systems) do
+		if system[event] then
+			for entity, _ in pairs(self._layers[layer]) do
+				if self._cache[system][entity] then
+					system[event](entity, ...)
+				end
+			end
+		end
+	end
+end
+
+function Pool:callOnEntity(entity, event, ...)
 	for _, system in ipairs(self._systems) do
 		if system[event] and self._cache[system][entity] then
 			system[event](entity, ...)
@@ -50,27 +62,32 @@ function Pool:callOn(entity, event, ...)
 	end
 end
 
-function Pool:queue(entity)
-	self._queue[entity] = true
+function Pool:queue(entity, layer)
+	self._queue[entity] = layer or false
 end
 
 function Pool:flush()
-	for entity, _ in pairs(self._queue) do
-		self._entities[entity] = true
+	for entity, layer in pairs(self._queue) do
+		self._entities[entity] = layer
+		if layer then
+			self._layers[layer][entity] = true
+		end
 		self._queue[entity] = nil
 		for _, system in ipairs(self._systems) do
 			if (not system.filter) or system.filter(entity) then
 				self._cache[system][entity] = true
 			end
 		end
-		self:callOn(entity, 'add')
+		self:callOnEntity(entity, 'add')
 	end
 end
 
 function Pool:remove(f)
 	for entity, _ in pairs(self._entities) do
 		if f(entity) then
-			self:callOn(entity, 'remove')
+			self:callOnEntity(entity, 'remove')
+			local layer = self._entities[entity]
+			self._layers[layer][entity] = nil
 			self._entities[entity] = nil
 			for _, system in ipairs(self._systems) do
 				self._cache[system][entity] = nil
@@ -104,15 +121,22 @@ nata.oop = setmetatable({_f = {}}, {
 	end
 })
 
-function nata.new(systems)
+function nata.new(options)
+	options = options or {}
 	local pool = setmetatable({
-		_systems = systems or {nata.oop},
+		_systems = options.systems or {nata.oop},
 		_cache = {},
 		_entities = {},
 		_queue = {},
+		_layers = {},
 	}, Pool)
 	for _, system in ipairs(pool._systems) do
 		pool._cache[system] = {}
+	end
+	if options.layers then
+		for _, layer in ipairs(options.layers) do
+			pool._layers[layer] = {}
+		end
 	end
 	return pool
 end
